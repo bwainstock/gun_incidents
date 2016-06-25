@@ -4,9 +4,11 @@ import sqlite3
 import requests
 
 from bs4 import BeautifulSoup
+from pyshorteners import Shortener
 import tweepy
 
 DBNAME = 'incidents.db'
+SHORTENER = Shortener('Tinyurl')
 
 def connect_to_twitter():
     """
@@ -40,6 +42,25 @@ def get_incidents(url):
     return incidents
 
 
+def build_status(data):
+    """Builds and returns status string"""
+    _, state, city, _, killed, injured, incident_url, source_url = data
+    status_string = 'Gun incident reported: '
+    if killed and injured:
+        status_string += '{} dead and {} injured '.format(killed, injured)
+    elif killed and not injured:
+        status_string += '{} dead '.format(killed)
+    elif injured and not killed:
+        status_string += '{} injured '.format(injured)
+    else:
+        status_string += 'no injuries at this time '
+    status_string += 'near {}, {}. '.format(city, state)
+    #status_string += '{} {} '.format(incident_url, source_url)
+    status_string += '{} {} '.format(
+        SHORTENER.short(incident_url), SHORTENER.short(source_url))
+    return status_string
+
+
 def insert_incidents(incidents):
     """Inserts gun incidents into sqlite db"""
 
@@ -53,34 +74,29 @@ def insert_incidents(incidents):
                 state = incident[1].text
                 city = incident[2].text
                 address = incident[3].text
-                killed = incident[4].text
-                injured = incident[5].text
+                killed = int(incident[4].text)
+                injured = int(incident[5].text)
                 incident_url = incident[6].find('li', class_='0').find('a').attrs['href']
                 incident_url = ''.join([base_url, incident_url])
                 source_url = incident[6].find('li', class_='1').find('a').attrs['href']
 
-                data = (date, state, city, address, killed, injured, incident_url, source_url)
-
-                con.execute('INSERT INTO incidents VALUES (?,?,?,?,?,?,?,?)', data)
                 state_abbr = con.execute('SELECT abbr FROM states WHERE state = ?;', [state])
                 state_abbr = state_abbr.fetchone()
+                state = state_abbr[0]
+                data = (date, state, city, address, killed, injured, incident_url, source_url)
+
+                #con.execute('INSERT INTO incidents VALUES (?,?,?,?,?,?,?,?)', data)
                 query = 'SELECT twitterid FROM congress WHERE state = ? and role = "senator";'
                 reps = con.execute(query, state_abbr)
                 reps = reps.fetchall()
-                #api = connect_to_twitter()
-                status_string = 'Gun incident alert: '
-                if killed and injured:
-                    status_string += '{} killed and {} injured '.format(killed, injured)
-                elif killed and not injured:
-                    status_string += '{} killed '.format(killed)
-                elif injured and not killed:
-                    status_string += '{} injured '.format(injured)
-                else:
-                    status_string += 'no injuries at this time
-                status_string += 'near {}, {}. '.format(city, state)
-                status_string += '{} #guns #gunincident'.format(reps)
-                print('inserted', date, state, city)
+                reps = [''.join(['@', rep[0]]) for rep in reps]
+                status_string = build_status(data)
+                status_string += '{} {} '.format(reps[0], reps[1])
                 print(status_string)
+                input()
+                api = connect_to_twitter()
+                api.update_status(status_string)
+                print('inserted', date, state, city)
         except sqlite3.IntegrityError:
             print('dup entry', data)
 
