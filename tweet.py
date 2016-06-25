@@ -1,10 +1,33 @@
 """Downloads gun incidents from gun violence archive and tweets each incident to representatives"""
+import json
 import sqlite3
 import requests
 
 from bs4 import BeautifulSoup
+import tweepy
 
 DBNAME = 'incidents.db'
+
+def connect_to_twitter():
+    """
+    Authenticates with twitter and returns api object
+    """
+
+    with open('twitter_api.keys', 'r') as twitter_api_keys:
+        data = json.load(twitter_api_keys)
+
+    consumer_key = data['consumer_key']
+    consumer_secret = data['consumer_secret']
+    key = data['key']
+    secret = data['secret']
+
+    auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
+    auth.set_access_token(key, secret)
+
+    api = tweepy.API(auth)
+    return api
+
+
 def get_incidents(url):
     """Fetches gun incident html"""
 
@@ -39,7 +62,25 @@ def insert_incidents(incidents):
                 data = (date, state, city, address, killed, injured, incident_url, source_url)
 
                 con.execute('INSERT INTO incidents VALUES (?,?,?,?,?,?,?,?)', data)
-                print('inserted', data)
+                state_abbr = con.execute('SELECT abbr FROM states WHERE state = ?;', [state])
+                state_abbr = state_abbr.fetchone()
+                query = 'SELECT twitterid FROM congress WHERE state = ? and role = "senator";'
+                reps = con.execute(query, state_abbr)
+                reps = reps.fetchall()
+                #api = connect_to_twitter()
+                status_string = 'Gun incident alert: '
+                if killed and injured:
+                    status_string += '{} killed and {} injured '.format(killed, injured)
+                elif killed and not injured:
+                    status_string += '{} killed '.format(killed)
+                elif injured and not killed:
+                    status_string += '{} injured '.format(injured)
+                else:
+                    status_string += 'no injuries at this time
+                status_string += 'near {}, {}. '.format(city, state)
+                status_string += '{} #guns #gunincident'.format(reps)
+                print('inserted', date, state, city)
+                print(status_string)
         except sqlite3.IntegrityError:
             print('dup entry', data)
 
